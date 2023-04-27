@@ -19,7 +19,7 @@ from geometry_msgs.msg import Pose
 from ariac_msgs.msg import Order as OrderMsg
 from ariac_msgs.msg import AdvancedLogicalCameraImage 
 
-from rwa4_group19.rwa4_msgs import Order, KitTrayPose
+from rwa4_group19.rwa4_msgs import Order, KitTrayPose, PartPose
 
 class RWA4Node(Node):
     '''
@@ -35,6 +35,7 @@ class RWA4Node(Node):
         self._node_name = node_name
         self._orders = deque()  # queue of orders received
         self._tray_poses = dict()  # dictionary of tray poses
+        self._part_poses = dict()  # dictionary of part poses
 
         self.get_logger().info(f'{self._node_name}: node initialized')
 
@@ -59,6 +60,18 @@ class RWA4Node(Node):
                                                         '/ariac/sensors/table2_camera/image',
                                                         self._table2_cam_sub_callback,
                                                         qos_profile)
+    
+        self._left_bins_cam_sub_msg = False
+        self._left_bins_cam_sub = self.create_subscription(AdvancedLogicalCameraImage, 
+                                                           '/ariac/sensors/left_bins_camera/image',
+                                                           self._left_bins_cam_sub_callback,
+                                                           qos_profile)
+
+        self._right_bins_cam_sub_msg = False
+        self._right_bins_cam_sub = self.create_subscription(AdvancedLogicalCameraImage,
+                                                            '/ariac/sensors/right_bins_camera/image',
+                                                            self._right_bins_cam_sub_callback,
+                                                            qos_profile)
 
     def _order_sub_callback(self, message) -> None:
         order = Order.from_msg(message)
@@ -96,6 +109,32 @@ class RWA4Node(Node):
                     self._tray_poses[tray_id] = KitTrayPose(tray_id, tray_pose_w)
                     self.get_logger().info(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
                     break
+            
+    def _left_bins_cam_sub_callback(self, msg) -> None:
+        if not self._left_bins_cam_sub_msg:
+            self._left_bins_cam_sub_msg = True
+            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/left_bins_camera/image')
+
+            for part in msg.part_poses:
+                part_pose_w = self._multiply_pose(msg.sensor_pose, part.pose)
+                if part.part.type not in self._part_poses:
+                    self._part_poses[part.part.type] = dict()
+                if part.part.color not in self._part_poses[part.part.type]:
+                    self._part_poses[part.part.type][part.part.color] = list()
+                self._part_poses[part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
+
+    def _right_bins_cam_sub_callback(self, msg) -> None:
+        if not self._right_bins_cam_sub_msg:
+            self._right_bins_cam_sub_msg = True
+            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/right_bins_camera/image')
+
+            for part in msg.part_poses:
+                part_pose_w = self._multiply_pose(msg.sensor_pose, part.pose)
+                if part.part.type not in self._part_poses:
+                    self._part_poses[part.part.type] = dict()
+                if part.part.color not in self._part_poses[part.part.type]:
+                    self._part_poses[part.part.type][part.part.color] = list()
+                self._part_poses[part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
 
     def _multiply_pose(self, pose1: Pose, pose2: Pose) -> Pose:
         '''

@@ -110,3 +110,16 @@ class KitTrayPose:
     @classmethod
     def from_msg(cls, msg) -> "KitTrayPose":
         return cls(msg.id, msg.pose)
+
+
+class PartPose:
+    def __init__(self, part : Part, pose : Pose):
+        self.part = part
+        self.pose = pose
+    
+    def __str__(self) -> str:
+        return f"PartPose\n part:\n{self.part}\n pose:\n{self.pose}"
+
+    @classmethod
+    def from_msg(cls, msg) -> "PartPose":
+        return cls(Part.from_msg(msg.part), msg.pose)

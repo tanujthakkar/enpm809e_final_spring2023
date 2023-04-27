@@ -19,7 +19,7 @@ from geometry_msgs.msg import Pose
 from ariac_msgs.msg import Order as OrderMsg
 from ariac_msgs.msg import AdvancedLogicalCameraImage 
 
-from rwa4_group19.rwa4_msgs import Order
+from rwa4_group19.rwa4_msgs import Order, KitTrayPose
 
 class RWA4Node(Node):
     '''
@@ -29,11 +29,12 @@ class RWA4Node(Node):
         Node (class): ROS2 node class
     '''
 
-    def __init__(self, node_name):
+    def __init__(self, node_name) -> None:
         super().__init__(node_name)
 
         self._node_name = node_name
         self._orders = deque()  # queue of orders received
+        self._tray_poses = dict()  # dictionary of tray poses
 
         self.get_logger().info(f'{self._node_name}: node initialized')
 
@@ -59,38 +60,40 @@ class RWA4Node(Node):
                                                         self._table2_cam_sub_callback,
                                                         qos_profile)
 
-    def _order_sub_callback(self, message):
+    def _order_sub_callback(self, message) -> None:
         order = Order.from_msg(message)
         self._orders.append(order)
         self.get_logger().info(f'{self._node_name}: received order from topic /ariac/orders:\n{order}')
 
-    def _table1_cam_sub_callback(self, msg):
+    def _table1_cam_sub_callback(self, msg) -> None:
         if not self._table1_cam_sub_msg:
-            self._table1_cam_sub_msg = True
+            self._table1_cam_sub_msg = True  # only process first message
             self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/table1_camera/image')
             
             # Get current order tray id
-            tray_id = self._orders[0].kitting_task.tray_id
+            tray_id = self._orders[0].kitting_task.tray_id if len(self._orders) > 0 else None
 
             # Find tray in camera image msg
             for tray_pose in msg.tray_poses:
-                if tray_pose.id == tray_id:
-                    tray_pose_w = self._multiply_pose(msg.sensor_pose, msg.tray_poses[0].pose)
+                if tray_id and tray_pose.id == tray_id:
+                    tray_pose_w = self._multiply_pose(msg.sensor_pose, tray_pose)
+                    self._tray_poses[tray_id] = KitTrayPose(tray_id, tray_pose_w)
                     self.get_logger().info(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
                     break
 
-    def _table2_cam_sub_callback(self, msg):
+    def _table2_cam_sub_callback(self, msg) -> None:
         if not self._table2_cam_sub_msg:
-            self._table2_cam_sub_msg = True
+            self._table2_cam_sub_msg = True  # only process first message
             self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/table2_camera/image')
 
             # Get current order tray id
-            tray_id = self._orders[0].kitting_task.tray_id
+            tray_id = self._orders[0].kitting_task.tray_id if len(self._orders) > 0 else None
 
             # Find tray in camera image msg
             for tray_pose in msg.tray_poses:
-                if tray_pose.id == tray_id:
-                    tray_pose_w = self._multiply_pose(msg.sensor_pose, msg.tray_poses[0].pose)
+                if tray_id and tray_pose.id == tray_id:
+                    tray_pose_w = self._multiply_pose(msg.sensor_pose, tray_pose)
+                    self._tray_poses[tray_id] = KitTrayPose(tray_id, tray_pose_w)
                     self.get_logger().info(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
                     break
 

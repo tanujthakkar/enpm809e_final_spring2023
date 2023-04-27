@@ -4,6 +4,7 @@
 # Author(s): Tanuj Thakkar (117817539), Aneesh Dandime (118418506)
 # Email(s): tanuj@umd.edu, aneeshd@umd.edu
 
+from geometry_msgs.msg import Pose
 
 class Part:
     _COLOR = {0 : "RED",
@@ -96,3 +97,16 @@ class Order:
         if msg.kitting_task is not None:
             kitting_task = KittingTask.from_msg(msg.kitting_task)
         return cls(msg.id, msg.type, msg.priority, kitting_task)
+
+
+class KitTrayPose:
+    def __init__(self, id : int, pose : Pose):
+        self.id = id
+        self.pose = pose
+    
+    def __str__(self) -> str:
+        return f"KitTrayPose\n id: {self.id}\n pose:\n{self.pose}"
+    
+    @classmethod
+    def from_msg(cls, msg) -> "KitTrayPose":
+        return cls(msg.id, msg.pose)

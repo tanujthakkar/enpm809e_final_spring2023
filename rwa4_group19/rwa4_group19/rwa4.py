@@ -45,6 +45,7 @@ class RWA4Node(Node):
             depth=10)
 
         # Subscribers
+        self._order_sub_msg = False
         self._order_sub = self.create_subscription(OrderMsg, '/ariac/orders',
                                                    self._order_sub_callback,
                                                    10)
@@ -74,46 +75,49 @@ class RWA4Node(Node):
                                                             qos_profile)
 
     def _order_sub_callback(self, message) -> None:
+        self._order_sub_msg = True
         order = Order.from_msg(message)
         self._orders.append(order)
-        self.get_logger().info(f'{self._node_name}: received order from topic /ariac/orders:\n{order}')
+        self.get_logger().info(f'\n---------------------- \
+                                 \n--- Order {order.id} --- \
+                                 \n----------------------')
 
     def _table1_cam_sub_callback(self, msg) -> None:
-        if not self._table1_cam_sub_msg:
+        if self._order_sub_msg and not self._table1_cam_sub_msg:
             self._table1_cam_sub_msg = True  # only process first message
-            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/table1_camera/image')
+            self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table1_camera/image')
 
-            # Get current order tray id
-            tray_id = self._orders[0].kitting_task.tray_id if len(self._orders) > 0 else None
+            for tray in msg.tray_poses:
+                tray_pose_w = self._multiply_pose(msg.sensor_pose, tray.pose)
+                self._tray_poses[tray.id] = KitTrayPose(tray.id, tray_pose_w)
+                self.get_logger().debug(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
 
-            # Find tray in camera image msg
-            for tray_pose in msg.tray_poses:
-                if tray_id and tray_pose.id == tray_id:
-                    tray_pose_w = self._multiply_pose(msg.sensor_pose, tray_pose.pose)
-                    self._tray_poses[tray_id] = KitTrayPose(tray_id, tray_pose_w)
-                    self.get_logger().info(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
-                    break
+            tray_id = self._orders[0].kitting_task.tray_id
+            if tray_id in self._tray_poses:
+                self.get_logger().info(f'{self._tray_poses[tray_id]}')
+            else:
+                self.get_logger().info(f'{self._node_name}: tray {tray_id} not found')
 
     def _table2_cam_sub_callback(self, msg) -> None:
-        if not self._table2_cam_sub_msg:
+        if self._order_sub_msg and not self._table2_cam_sub_msg:
             self._table2_cam_sub_msg = True  # only process first message
-            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/table2_camera/image')
+            self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table2_camera/image')
 
-            # Get current order tray id
-            tray_id = self._orders[0].kitting_task.tray_id if len(self._orders) > 0 else None
+            for tray in msg.tray_poses:
+                tray_pose_w = self._multiply_pose(msg.sensor_pose, tray.pose)
+                self._tray_poses[tray.id] = KitTrayPose(tray.id, tray_pose_w)
+                self.get_logger().debug(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
 
-            # Find tray in camera image msg
-            for tray_pose in msg.tray_poses:
-                if tray_id and tray_pose.id == tray_id:
-                    tray_pose_w = self._multiply_pose(msg.sensor_pose, tray_pose.pose)
-                    self._tray_poses[tray_id] = KitTrayPose(tray_id, tray_pose_w)
-                    self.get_logger().info(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
-                    break
-            
+            tray_id = self._orders[0].kitting_task.tray_id
+            if tray_id in self._tray_poses:
+                self.get_logger().info(f'{self._tray_poses[tray_id]}')
+            else:
+                self.get_logger().info(f'{self._node_name}: tray {tray_id} not found')
+
     def _left_bins_cam_sub_callback(self, msg) -> None:
         if not self._left_bins_cam_sub_msg:
             self._left_bins_cam_sub_msg = True
-            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/left_bins_camera/image')
+            self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/left_bins_camera/image')
 
             for part in msg.part_poses:
                 part_pose_w = self._multiply_pose(msg.sensor_pose, part.pose)
@@ -122,11 +126,17 @@ class RWA4Node(Node):
                 if part.part.color not in self._part_poses[part.part.type]:
                     self._part_poses[part.part.type][part.part.color] = list()
                 self._part_poses[part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
+        
+            parts = self._orders[0].kitting_task.parts
+            for part in parts:
+                if part.part.type in self._part_poses:
+                    if part.part.color in self._part_poses[part.part.type]:
+                        self.get_logger().info(f'{self._part_poses[part.part.type][part.part.color][0]}')
 
     def _right_bins_cam_sub_callback(self, msg) -> None:
         if not self._right_bins_cam_sub_msg:
             self._right_bins_cam_sub_msg = True
-            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/right_bins_camera/image')
+            self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/right_bins_camera/image')
 
             for part in msg.part_poses:
                 part_pose_w = self._multiply_pose(msg.sensor_pose, part.pose)
@@ -135,6 +145,12 @@ class RWA4Node(Node):
                 if part.part.color not in self._part_poses[part.part.type]:
                     self._part_poses[part.part.type][part.part.color] = list()
                 self._part_poses[part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
+            
+            parts = self._orders[0].kitting_task.parts
+            for part in parts:
+                if part.part.type in self._part_poses:
+                    if part.part.color in self._part_poses[part.part.type]:
+                        self.get_logger().info(f'{self._part_poses[part.part.type][part.part.color][0]}')
 
     def _multiply_pose(self, pose1: Pose, pose2: Pose) -> Pose:
         '''

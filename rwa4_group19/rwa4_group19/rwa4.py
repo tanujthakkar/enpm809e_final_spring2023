@@ -45,7 +45,6 @@ class RWA4Node(Node):
             depth=10)
 
         # Subscribers
-        self._order_sub_msg = False
         self._order_sub = self.create_subscription(OrderMsg, '/ariac/orders',
                                                    self._order_sub_callback,
                                                    10)
@@ -74,16 +73,19 @@ class RWA4Node(Node):
                                                             self._right_bins_cam_sub_callback,
                                                             qos_profile)
 
+        self._log_order = False
+        self._log_timer = self.create_timer(1.0, self._log_timer_callback)
+
     def _order_sub_callback(self, message) -> None:
-        self._order_sub_msg = True
+        self.get_logger().debug(f'{self._node_name}: received order from topic /ariac/orders')
         order = Order.from_msg(message)
         self._orders.append(order)
-        self.get_logger().info(f'\n---------------------- \
-                                 \n--- Order {order.id} --- \
-                                 \n----------------------')
+        self.get_logger().debug(f'{self._node_name}: order received:\n{order}')
+
+        self._log_order = True  # log order on next timer callback
 
     def _table1_cam_sub_callback(self, msg) -> None:
-        if self._order_sub_msg and not self._table1_cam_sub_msg:
+        if len(self._orders) and not self._table1_cam_sub_msg:
             self._table1_cam_sub_msg = True  # only process first message
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table1_camera/image')
 
@@ -92,14 +94,8 @@ class RWA4Node(Node):
                 self._tray_poses[tray.id] = KitTrayPose(tray.id, tray_pose_w)
                 self.get_logger().debug(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
 
-            tray_id = self._orders[0].kitting_task.tray_id
-            if tray_id in self._tray_poses:
-                self.get_logger().info(f'{self._tray_poses[tray_id]}')
-            else:
-                self.get_logger().info(f'{self._node_name}: tray {tray_id} not found')
-
     def _table2_cam_sub_callback(self, msg) -> None:
-        if self._order_sub_msg and not self._table2_cam_sub_msg:
+        if len(self._orders) and not self._table2_cam_sub_msg:
             self._table2_cam_sub_msg = True  # only process first message
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table2_camera/image')
 
@@ -108,15 +104,9 @@ class RWA4Node(Node):
                 self._tray_poses[tray.id] = KitTrayPose(tray.id, tray_pose_w)
                 self.get_logger().debug(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
 
-            tray_id = self._orders[0].kitting_task.tray_id
-            if tray_id in self._tray_poses:
-                self.get_logger().info(f'{self._tray_poses[tray_id]}')
-            else:
-                self.get_logger().info(f'{self._node_name}: tray {tray_id} not found')
-
     def _left_bins_cam_sub_callback(self, msg) -> None:
         if not self._left_bins_cam_sub_msg:
-            self._left_bins_cam_sub_msg = True
+            self._left_bins_cam_sub_msg = True  # only process first message
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/left_bins_camera/image')
 
             for part in msg.part_poses:
@@ -126,16 +116,10 @@ class RWA4Node(Node):
                 if part.part.color not in self._part_poses[part.part.type]:
                     self._part_poses[part.part.type][part.part.color] = list()
                 self._part_poses[part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
-        
-            parts = self._orders[0].kitting_task.parts
-            for part in parts:
-                if part.part.type in self._part_poses:
-                    if part.part.color in self._part_poses[part.part.type]:
-                        self.get_logger().info(f'{self._part_poses[part.part.type][part.part.color][0]}')
 
     def _right_bins_cam_sub_callback(self, msg) -> None:
         if not self._right_bins_cam_sub_msg:
-            self._right_bins_cam_sub_msg = True
+            self._right_bins_cam_sub_msg = True  # only process first message
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/right_bins_camera/image')
 
             for part in msg.part_poses:
@@ -145,12 +129,37 @@ class RWA4Node(Node):
                 if part.part.color not in self._part_poses[part.part.type]:
                     self._part_poses[part.part.type][part.part.color] = list()
                 self._part_poses[part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
-            
-            parts = self._orders[0].kitting_task.parts
-            for part in parts:
-                if part.part.type in self._part_poses:
-                    if part.part.color in self._part_poses[part.part.type]:
-                        self.get_logger().info(f'{self._part_poses[part.part.type][part.part.color][0]}')
+    
+    def _log_timer_callback(self) -> None:
+        if (len(self._orders) and
+            self._log_order and
+            self._table1_cam_sub_msg and
+            self._table2_cam_sub_msg and
+            self._left_bins_cam_sub_msg and
+            self._right_bins_cam_sub_msg):
+                
+                latest_order = self._orders[-1]  # get latest order
+                self.get_logger().info(f'\n---------------------- \
+                                 \n--- Order {latest_order.id} --- \
+                                 \n----------------------')
+
+                tray_id = latest_order.kitting_task.tray_id
+                if tray_id in self._tray_poses:
+                    self.get_logger().info(f'{self._tray_poses[tray_id]}')
+                else:
+                    self.get_logger().info(
+                        f'{self._node_name}: tray {tray_id} not found')
+
+                parts = latest_order.kitting_task.parts
+                for part in parts:
+                    if part.part.type in self._part_poses:
+                        if part.part.color in self._part_poses[part.part.type]:
+                            self.get_logger().info(f'{self._part_poses[part.part.type][part.part.color][0]}')
+                        else:
+                            self.get_logger().info(
+                                f'{self._node_name}: part {part.part.type} {part.part.color} not found')
+
+                self._log_order = False  # reset flag
 
     def _multiply_pose(self, pose1: Pose, pose2: Pose) -> Pose:
         '''

@@ -27,9 +27,46 @@ class RWA4Node(Node):
 
     Args:
         Node (class): ROS2 node class
+
+    Attributes:
+        _node_name (str): name of the node
+        _orders (deque): queue of orders received
+        _tray_poses (dict): dictionary of tray poses
+        _part_poses (dict): dictionary of part poses
+        _order_sub (Subscriber): subscriber for orders
+        _table1_cam_sub (Subscriber): subscriber for table 1 camera
+        _table2_cam_sub (Subscriber): subscriber for table 2 camera
+        _left_bins_cam_sub (Subscriber): subscriber for left bins camera
+        _right_bins_cam_sub (Subscriber): subscriber for right bins camera
+        _log_timer (Timer): timer for logging
+        _table1_cam_sub_msg (bool): flag to check if table 1 camera message has been received
+        _table2_cam_sub_msg (bool): flag to check if table 2 camera message has been received
+        _left_bins_cam_sub_msg (bool): flag to check if left bins camera message has been received
+        _right_bins_cam_sub_msg (bool): flag to check if right bins camera message has been received
+        _log_order (bool): flag to check if order logging is enabled
+
+    Methods:
+        __init__(node_name): constructor
+        _order_sub_callback(msg): callback function for order subscriber
+        _table1_cam_sub_callback(msg): callback function for table 1 camera subscriber
+        _table2_cam_sub_callback(msg): callback function for table 2 camera subscriber
+        _left_bins_cam_sub_callback(msg): callback function for left bins camera subscriber
+        _right_bins_cam_sub_callback(msg): callback function for right bins camera subscriber
+        _log_timer_callback(): callback function for log timer
+        _multiply_pose(pose1, pose2): multiplies two poses using PyKDL
     '''
 
     def __init__(self, node_name) -> None:
+        '''
+        Constructor for RWA4Node class
+
+        Args:
+            node_name (str): name of the node
+
+        Returns:
+            None
+        '''
+
         super().__init__(node_name)
 
         self._node_name = node_name
@@ -76,9 +113,19 @@ class RWA4Node(Node):
         self._log_order = False
         self._log_timer = self.create_timer(1.0, self._log_timer_callback)
 
-    def _order_sub_callback(self, message) -> None:
+    def _order_sub_callback(self, msg) -> None:
+        '''
+        Callback function for order subscriber
+
+        Args:
+            msg (OrderMsg): message received from topic /ariac/orders
+
+        Returns:
+            None
+        '''
+
         self.get_logger().debug(f'{self._node_name}: received order from topic /ariac/orders')
-        order = Order.from_msg(message)
+        order = Order.from_msg(msg)
         self._orders.append(order)
         self.get_logger().debug(f'{self._node_name}: order received:\n{order}')
 
@@ -89,6 +136,16 @@ class RWA4Node(Node):
         self._right_bins_cam_sub_msg = False  # reset right bins camera message received flag
 
     def _table1_cam_sub_callback(self, msg) -> None:
+        '''
+        Callback function for table 1 camera subscriber
+
+        Args:
+            msg (AdvancedLogicalCameraImage): message received from topic /ariac/sensors/table1_camera/image
+
+        Returns:
+            None
+        '''
+
         if len(self._orders) and not self._table1_cam_sub_msg:
             self._table1_cam_sub_msg = True  # only process first message after each order received
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table1_camera/image')
@@ -99,6 +156,16 @@ class RWA4Node(Node):
                 self.get_logger().debug(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
 
     def _table2_cam_sub_callback(self, msg) -> None:
+        '''
+        Callback function for table 2 camera subscriber
+
+        Args:
+            msg (AdvancedLogicalCameraImage): message received from topic /ariac/sensors/table2_camera/image
+
+        Returns:
+            None
+        '''
+
         if len(self._orders) and not self._table2_cam_sub_msg:
             self._table2_cam_sub_msg = True  # only process first message after each order received 
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table2_camera/image')
@@ -109,6 +176,16 @@ class RWA4Node(Node):
                 self.get_logger().debug(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
 
     def _left_bins_cam_sub_callback(self, msg) -> None:
+        '''
+        Callback function for left bins camera subscriber
+
+        Args:
+            msg (AdvancedLogicalCameraImage): message received from topic /ariac/sensors/left_bins_camera/image
+
+        Returns:
+            None
+        '''
+
         if not self._left_bins_cam_sub_msg:
             self._left_bins_cam_sub_msg = True  # only process first message after each order received 
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/left_bins_camera/image')
@@ -122,6 +199,16 @@ class RWA4Node(Node):
                 self._part_poses[part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
 
     def _right_bins_cam_sub_callback(self, msg) -> None:
+        '''
+        Callback function for right bins camera subscriber
+
+        Args:
+            msg (AdvancedLogicalCameraImage): message received from topic /ariac/sensors/right_bins_camera/image
+
+        Returns:
+            None
+        '''
+
         if not self._right_bins_cam_sub_msg:
             self._right_bins_cam_sub_msg = True  # only process first message after each order received 
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/right_bins_camera/image')
@@ -135,6 +222,16 @@ class RWA4Node(Node):
                 self._part_poses[part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
     
     def _log_timer_callback(self) -> None:
+        '''
+        Callback function for logging timer
+
+        Args:
+            None
+
+        Returns:
+            None
+        '''
+
         if (len(self._orders) and
             self._log_order and
             self._table1_cam_sub_msg and
@@ -144,8 +241,8 @@ class RWA4Node(Node):
                 
                 latest_order = self._orders[-1]  # get latest order
                 self.get_logger().info(f'\n---------------------- \
-                                 \n--- Order {latest_order.id} --- \
-                                 \n----------------------')
+                                         \n--- Order {latest_order.id} --- \
+                                         \n----------------------')
 
                 tray_id = latest_order.kitting_task.tray_id
                 if tray_id in self._tray_poses:
@@ -169,9 +266,11 @@ class RWA4Node(Node):
     def _multiply_pose(self, pose1: Pose, pose2: Pose) -> Pose:
         '''
         Use KDL to multiply two poses together.
+
         Args:
             pose1 (Pose): Pose of the first frame
             pose2 (Pose): Pose of the second frame
+
         Returns:
             Pose: Pose of the resulting frame
         '''

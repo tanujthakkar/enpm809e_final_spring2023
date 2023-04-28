@@ -82,14 +82,14 @@ class RWA4Node(Node):
         if not self._table1_cam_sub_msg:
             self._table1_cam_sub_msg = True  # only process first message
             self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/table1_camera/image')
-            
+
             # Get current order tray id
             tray_id = self._orders[0].kitting_task.tray_id if len(self._orders) > 0 else None
 
             # Find tray in camera image msg
             for tray_pose in msg.tray_poses:
                 if tray_id and tray_pose.id == tray_id:
-                    tray_pose_w = self._multiply_pose(msg.sensor_pose, tray_pose)
+                    tray_pose_w = self._multiply_pose(msg.sensor_pose, tray_pose.pose)
                     self._tray_poses[tray_id] = KitTrayPose(tray_id, tray_pose_w)
                     self.get_logger().info(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
                     break
@@ -105,7 +105,7 @@ class RWA4Node(Node):
             # Find tray in camera image msg
             for tray_pose in msg.tray_poses:
                 if tray_id and tray_pose.id == tray_id:
-                    tray_pose_w = self._multiply_pose(msg.sensor_pose, tray_pose)
+                    tray_pose_w = self._multiply_pose(msg.sensor_pose, tray_pose.pose)
                     self._tray_poses[tray_id] = KitTrayPose(tray_id, tray_pose_w)
                     self.get_logger().info(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
                     break

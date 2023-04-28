@@ -83,10 +83,14 @@ class RWA4Node(Node):
         self.get_logger().debug(f'{self._node_name}: order received:\n{order}')
 
         self._log_order = True  # log order on next timer callback
+        self._table1_cam_sub_msg = False  # reset table1 camera message received flag
+        self._table2_cam_sub_msg = False  # reset table2 camera message received flag
+        self._left_bins_cam_sub_msg = False  # reset left bins camera message received flag
+        self._right_bins_cam_sub_msg = False  # reset right bins camera message received flag
 
     def _table1_cam_sub_callback(self, msg) -> None:
         if len(self._orders) and not self._table1_cam_sub_msg:
-            self._table1_cam_sub_msg = True  # only process first message
+            self._table1_cam_sub_msg = True  # only process first message after each order received
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table1_camera/image')
 
             for tray in msg.tray_poses:
@@ -96,7 +100,7 @@ class RWA4Node(Node):
 
     def _table2_cam_sub_callback(self, msg) -> None:
         if len(self._orders) and not self._table2_cam_sub_msg:
-            self._table2_cam_sub_msg = True  # only process first message
+            self._table2_cam_sub_msg = True  # only process first message after each order received 
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table2_camera/image')
 
             for tray in msg.tray_poses:
@@ -106,7 +110,7 @@ class RWA4Node(Node):
 
     def _left_bins_cam_sub_callback(self, msg) -> None:
         if not self._left_bins_cam_sub_msg:
-            self._left_bins_cam_sub_msg = True  # only process first message
+            self._left_bins_cam_sub_msg = True  # only process first message after each order received 
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/left_bins_camera/image')
 
             for part in msg.part_poses:
@@ -119,7 +123,7 @@ class RWA4Node(Node):
 
     def _right_bins_cam_sub_callback(self, msg) -> None:
         if not self._right_bins_cam_sub_msg:
-            self._right_bins_cam_sub_msg = True  # only process first message
+            self._right_bins_cam_sub_msg = True  # only process first message after each order received 
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/right_bins_camera/image')
 
             for part in msg.part_poses:
@@ -155,6 +159,7 @@ class RWA4Node(Node):
                     if part.part.type in self._part_poses:
                         if part.part.color in self._part_poses[part.part.type]:
                             self.get_logger().info(f'{self._part_poses[part.part.type][part.part.color][0]}')
+                            self._part_poses[part.part.type][part.part.color].pop(0)  # remove part from list
                         else:
                             self.get_logger().info(
                                 f'{self._node_name}: part {part.part.type} {part.part.color} not found')

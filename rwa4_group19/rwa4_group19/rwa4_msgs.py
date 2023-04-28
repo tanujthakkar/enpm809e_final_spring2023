@@ -7,6 +7,22 @@
 from geometry_msgs.msg import Pose
 
 class Part:
+    """
+    Class to represent a part
+
+    Constants:
+        COLOR (dict): dictionary mapping color number to color name
+        TYPE (dict): dictionary mapping type number to type name
+
+    Attributes:
+        color (int): color of the part
+        type (int): type of the part
+
+    Methods:
+        __str__(): returns a string representation of the part
+        from_msg(msg): returns a Part object from a ROS message
+    """
+
     COLOR = {0 : "RED",
              1 : "GREEN",
              2 : "BLUE",
@@ -31,6 +47,21 @@ class Part:
 
 
 class KittingPart:
+    """
+    Class to represent a kitting part
+
+    Constants:
+        QUADRANT (dict): dictionary mapping quadrant number to quadrant name
+
+    Attributes:
+        quadrant (int): quadrant of the part
+        part (Part): part object
+
+    Methods:
+        __str__(): returns a string representation of the kitting part
+        from_msg(msg): returns a KittingPart object from a ROS message
+    """
+
     QUADRANT = {1 : "QUADRANT1",
                 2 : "QUADRANT2",
                 3 : "QUADRANT3",
@@ -49,6 +80,24 @@ class KittingPart:
 
 
 class KittingTask:
+    """
+    Class to represent a kitting task
+
+    Constants:
+        DESTINATION (dict): dictionary mapping destination number to destination name
+
+    Attributes:
+        agv_number (int): agv number
+        tray_id (int): tray id
+        destination (int): destination of the tray
+        parts (list): list of kitting parts
+
+    Methods:
+        __str__(): returns a string representation of the kitting task
+        from_msg(msg): returns a KittingTask object from a ROS message
+    """
+
+
     DESTINATION = {0 : "KITTING",
                    1 : "ASSEMBLY_FRONT",
                    2 : "ASSEMBLY_BACK",
@@ -75,6 +124,23 @@ class KittingTask:
 
 
 class Order:
+    """
+    Class to represent an order
+
+    Constants:
+        TASK (dict): dictionary mapping task number to task name
+
+    Attributes:
+        id (str): id of the order
+        type (int): type of the order
+        priority (bool): priority of the order
+        kitting_task (KittingTask): kitting task object
+
+    Methods:
+        __str__(): returns a string representation of the order
+        from_msg(msg): returns an Order object from a ROS message
+    """
+
     TASK = {0 : "KITTING",
             1 : "ASSEMBLY",
             2 : "COMBINED"}
@@ -100,6 +166,19 @@ class Order:
 
 
 class KitTrayPose:
+    """
+    Class to represent a kit tray pose
+    
+    Attributes:
+        id (int): id of the tray
+        pose (Pose): pose of the tray
+
+    Methods:
+        __str__(): returns a string representation of the kit tray pose
+        from_msg(msg): returns a KitTrayPose object from a ROS message
+    """
+
+
     def __init__(self, id : int, pose : Pose):
         self.id = id
         self.pose = pose
@@ -119,6 +198,18 @@ class KitTrayPose:
 
 
 class PartPose:
+    """
+    Class to represent a part pose
+
+    Attributes:
+        part (Part): part object
+        pose (Pose): pose of the part
+
+    Methods:
+        __str__(): returns a string representation of the part pose
+        from_msg(msg): returns a PartPose object from a ROS message
+    """
+
     def __init__(self, part : Part, pose : Pose):
         self.part = part
         self.pose = pose

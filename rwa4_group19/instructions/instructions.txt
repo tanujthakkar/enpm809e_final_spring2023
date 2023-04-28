@@ -1,0 +1,14 @@
+
+# RWA4 - Group 19
+
+# ENPM 809E - RWA4
+# Author(s): Tanuj Thakkar (117817539), Aneesh Dandime (118418506)
+# Email(s): tanuj@umd.edu, aneeshd@umd.edu
+
+- Run rwa4.launch.py file of the rwa4_group19 package using the following command,
+
+ros2 launch rwa4_group19 rwa4.launch.py
+
+- Run the ariac.launch.py file of the ariac_gazebo package using the following command,
+
+ros2 launch ariac_gazebo ariac.launch.py trial_name:=kitting2

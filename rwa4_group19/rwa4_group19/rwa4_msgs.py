@@ -7,23 +7,23 @@
 from geometry_msgs.msg import Pose
 
 class Part:
-    _COLOR = {0 : "RED",
-              1 : "GREEN",
-              2 : "BLUE",
-              3 : "ORANGE",
-              4 : "PURPLE",}
+    COLOR = {0 : "RED",
+             1 : "GREEN",
+             2 : "BLUE",
+             3 : "ORANGE",
+             4 : "PURPLE",}
 
-    _TYPE = {10 : "BATTERY",
-             11 : "PUMP",
-             12 : "SENSOR",
-             13 : "REGULATOR"}
+    TYPE = {10 : "BATTERY",
+            11 : "PUMP",
+            12 : "SENSOR",
+            13 : "REGULATOR"}
 
     def __init__(self, color : int, type : int) -> None:
         self.color = color
         self.type = type
     
     def __str__(self) -> str:
-        return f"Part\n color: {self._COLOR[self.color]}\n type: {self._TYPE[self.type]}"
+        return f"Part\n color: {self.COLOR[self.color]}\n type: {self.TYPE[self.type]}"
 
     @classmethod
     def from_msg(cls, msg) -> "Part":
@@ -31,17 +31,17 @@ class Part:
 
 
 class KittingPart:
-    _QUADRANT = {1 : "QUADRANT1",
-                 2 : "QUADRANT2",
-                 3 : "QUADRANT3",
-                 4 : "QUADRANT4"}
+    QUADRANT = {1 : "QUADRANT1",
+                2 : "QUADRANT2",
+                3 : "QUADRANT3",
+                4 : "QUADRANT4"}
 
     def __init__(self, quadrant : int, part : Part) -> None:
         self.quadrant = quadrant
         self.part = part
 
     def __str__(self) -> str:
-        return f"KittingPart\n quadrant: {self._QUADRANT[self.quadrant]}\n part:\n{self.part}"
+        return f"KittingPart\n quadrant: {self.QUADRANT[self.quadrant]}\n part:\n{self.part}"
 
     @classmethod
     def from_msg(cls, msg) -> "KittingPart":
@@ -49,10 +49,10 @@ class KittingPart:
 
 
 class KittingTask:
-    _DESTINATION = {0 : "KITTING",
-                    1 : "ASSEMBLY_FRONT",
-                    2 : "ASSEMBLY_BACK",
-                    3 : "WAREHOUSE"}
+    DESTINATION = {0 : "KITTING",
+                   1 : "ASSEMBLY_FRONT",
+                   2 : "ASSEMBLY_BACK",
+                   3 : "WAREHOUSE"}
 
     def __init__(self, agv_number : int, tray_id : int, destination : int, parts : list) -> None:
         self.agv_number = agv_number
@@ -61,7 +61,7 @@ class KittingTask:
         self.parts = parts
 
     def __str__(self) -> str:
-        s = f"KittingTask\n agv_number: {self.agv_number}\n tray_id: {self.tray_id}\n destination: {self._DESTINATION[self.destination]}\n parts:\n"
+        s = f"KittingTask\n agv_number: {self.agv_number}\n tray_id: {self.tray_id}\n destination: {self.DESTINATION[self.destination]}\n parts:\n"
         for part in self.parts:
             s += f"{part}\n"
         return s
@@ -75,9 +75,9 @@ class KittingTask:
 
 
 class Order:
-    _TASK = {0 : "KITTING",
-             1 : "ASSEMBLY",
-             2 : "COMBINED"}
+    TASK = {0 : "KITTING",
+            1 : "ASSEMBLY",
+            2 : "COMBINED"}
 
     def __init__(self, id : str, type : int, priority : bool, kitting_task : KittingTask=None) -> None:
         self.id = id
@@ -86,7 +86,7 @@ class Order:
         self.kitting_task = kitting_task
 
     def __str__(self) -> str:
-        s = f"Order\n id: {self.id}\n type: {self._TASK[self.type]}\n priority: {self.priority}\n"
+        s = f"Order\n id: {self.id}\n type: {self.TASK[self.type]}\n priority: {self.priority}\n"
         if self.kitting_task is not None:
             s += f"kitting_task:\n{self.kitting_task}"
         return s
@@ -105,8 +105,14 @@ class KitTrayPose:
         self.pose = pose
     
     def __str__(self) -> str:
-        return f"KitTrayPose\n id: {self.id}\n pose:\n{self.pose}"
-    
+        # return f"KitTrayPose\n id: {self.id}\n pose:\n{self.pose}"
+        s = f'\nTray: \
+              \n - id: {self.id} \
+              \n - pose: \
+              \n   - position: [{self.pose.position.x, self.pose.position.y, self.pose.position.z}] \
+              \n   - orientation: [{self.pose.orientation.x, self.pose.orientation.y, self.pose.orientation.z, self.pose.orientation.w}]'
+        return s
+
     @classmethod
     def from_msg(cls, msg) -> "KitTrayPose":
         return cls(msg.id, msg.pose)
@@ -118,7 +124,13 @@ class PartPose:
         self.pose = pose
     
     def __str__(self) -> str:
-        return f"PartPose\n part:\n{self.part}\n pose:\n{self.pose}"
+        # return f"PartPose\n part:\n{self.part}\n pose:\n{self.pose}"
+        s = f'\nPart: \
+              \n - {Part.COLOR[self.part.color]} {Part.TYPE[self.part.type]} \
+              \n - pose: \
+              \n   - position: [{self.pose.position.x, self.pose.position.y, self.pose.position.z}] \
+              \n   - orientation: [{self.pose.orientation.x, self.pose.orientation.y, self.pose.orientation.z, self.pose.orientation.w}]'
+        return s
 
     @classmethod
     def from_msg(cls, msg) -> "PartPose":

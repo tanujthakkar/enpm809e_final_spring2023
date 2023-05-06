@@ -10,6 +10,7 @@ from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor, MultiThreadedExecutor
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+from rclpy.parameter import ParameterType, Parameter
 
 from collections import deque
 
@@ -75,6 +76,9 @@ class RWA4Node(Node):
         self._part_poses = dict()  # dictionary of part poses
 
         self.get_logger().info(f'{self._node_name}: node initialized')
+
+        self.declare_parameter('order_id', None)
+        self.order_id = self.get_parameter('order_id').value
 
         qos_profile = QoSProfile(
             reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT,

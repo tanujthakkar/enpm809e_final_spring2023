@@ -16,11 +16,15 @@ from collections import deque
 
 import PyKDL
 from geometry_msgs.msg import Pose
+from std_srvs.srv import Trigger
 
 from ariac_msgs.msg import Order as OrderMsg
-from ariac_msgs.msg import AdvancedLogicalCameraImage 
+from ariac_msgs.msg import AdvancedLogicalCameraImage, CompetitionState
+from competitor_interfaces.msg import Robots as RobotsMsg
+from competitor_interfaces.srv import EnterToolChanger, ExitToolChanger
 
 from rwa4_group19.rwa4_msgs import Order, KitTrayPose, PartPose
+from robot_commander.robot_commander_interface import RobotCommanderInterface
 
 class RWA4Node(Node):
     '''
@@ -117,6 +121,207 @@ class RWA4Node(Node):
         self._log_order = False
         self._log_timer = self.create_timer(1.0, self._log_timer_callback)
 
+        timer_group = MutuallyExclusiveCallbackGroup()  # timer callback group
+        service_group = MutuallyExclusiveCallbackGroup()  # service callback group
+
+        # Flag to indicate if the kit has been completed
+        self._kit_completed = False
+        self._competition_started = False
+        self._competition_state = None
+
+        self.create_subscription(CompetitionState, '/ariac/competition_state',
+                                 self._competition_state_cb, 1)
+    
+        self._robot_action_timer = self.create_timer(1, self._robot_action_timer_callback,
+                                                     callback_group=timer_group)
+        
+        self._start_competition_client = self.create_client(
+            Trigger, '/ariac/start_competition')
+    
+        # Service client for moving the floor robot to the home position
+        self._move_floor_robot_home_client = self.create_client(
+            Trigger, '/competitor/floor_robot/go_home',
+            callback_group=service_group)
+
+        # Service client for entering the gripper slot
+        self._goto_tool_changer_client = self.create_client(
+            EnterToolChanger, '/competitor/floor_robot/enter_tool_changer',
+            callback_group=service_group)
+
+        self._retract_from_tool_changer_client = self.create_client(
+            ExitToolChanger, '/competitor/floor_robot/exit_tool_changer',
+            callback_group=service_group)
+
+    def _robot_action_timer_callback(self):
+        '''
+        Callback for the timer that triggers the robot actions
+        '''
+
+        if self._competition_state == CompetitionState.READY and not self._competition_started:
+            self.start_competition()
+
+        # exit the callback if the kit is completed
+        if self._kit_completed:
+            return
+        
+        # Get order details
+        for order in self._orders:
+            if order.id == self.order_id:
+                curr_order = order
+                break
+
+        tray_id = curr_order.kitting_task.tray_id
+        if tray_id in self._tray_poses:
+            self.get_logger().info(f'{self._tray_poses[tray_id]}')
+        else:
+            self.get_logger().info(
+                f'{self._node_name}: tray {tray_id} not found')
+
+        tray_pose = self._tray_poses[tray_id].pose
+
+        # move robot home
+        self.move_robot_home("floor_robot")
+
+        # change gripper type
+        self.goto_tool_changer("floor_robot", "kts2", "trays")
+        self.retract_from_tool_changer("floor_robot", "kts2", "trays")
+
+        # # to ignore function calls in this callback
+        # self._kit_completed = True
+    
+    def _competition_state_cb(self, msg: CompetitionState):
+        '''
+        /ariac/competition_state topic callback function
+
+        Args:
+            msg (CompetitionState): CompetitionState message
+        '''
+        self._competition_state = msg.competition_state
+
+    def start_competition(self):
+        '''
+        Start the competition
+        '''
+        self.get_logger().info('Waiting for competition state READY')
+
+        request = Trigger.Request()
+        future = self._start_competition_client.call_async(request)
+
+        # Wait until the service call is completed
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            self.get_logger().info('Started competition.')
+            self._competition_started = True
+        else:
+            self.get_logger().warn('Unable to start competition')
+
+    def move_robot_home(self, robot_name):
+        '''Move one of the robots to its home position.
+
+        Arguments:
+            robot_name -- Name of the robot to move home
+        '''
+        request = Trigger.Request()
+
+        if robot_name == 'floor_robot':
+            if not self._move_floor_robot_home_client.wait_for_service(timeout_sec=1.0):
+                self.get_logger().error('Robot commander node not running')
+                return
+
+            future = self._move_floor_robot_home_client.call_async(request)
+        else:
+            self.get_logger().error(f'Robot name: ({robot_name}) is not valid')
+            return
+
+        # Wait until the service call is completed
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            self.get_logger().info(f'Moved {robot_name} to home position')
+        else:
+            self.get_logger().warn(future.result().message)
+    
+    def goto_tool_changer(self, robot, station, gripper_type):
+        '''
+        Move the end effector inside the gripper slot.
+
+        Args:
+            station (str): Gripper station name
+            gripper_type (str): Gripper type
+
+        Raises:
+            KeyboardInterrupt: Exception raised when the user presses Ctrl+C
+        '''
+
+        self.get_logger().info('Move inside gripper slot service called')
+
+        request = EnterToolChanger.Request()
+
+        if robot == "floor_robot":
+            request.robot = RobotsMsg.FLOOR_ROBOT
+        else:
+            raise ValueError('Invalid robot name')
+
+        request.station = station
+        request.gripper_type = gripper_type
+
+        future = self._goto_tool_changer_client.call_async(request)
+
+        try:
+            rclpy.spin_until_future_complete(self, future)
+        except KeyboardInterrupt as kb_error:
+            raise KeyboardInterrupt from kb_error
+
+        if future.result() is not None:
+            response = future.result()
+            if response:
+                self.get_logger().info('Robot is at the tool changer')
+        else:
+            self.get_logger().error(
+                f'Service call failed {future.exception()}')
+            self.get_logger().error('Unable to move the robot to the tool changer')
+        
+    def retract_from_tool_changer(self, robot, station, gripper_type):
+        '''
+        Move the end effector inside the gripper slot.
+
+        Args:
+            station (str): Gripper station name
+            gripper_type (str): Gripper type
+
+        Raises:
+            KeyboardInterrupt: Exception raised when the user presses Ctrl+C
+        '''
+
+        self.get_logger().info('Move inside gripper slot service called')
+
+        request = ExitToolChanger.Request()
+
+        if robot == "floor_robot":
+            request.robot = RobotsMsg.FLOOR_ROBOT
+        else:
+            raise ValueError('Invalid robot name')
+
+        request.station = station
+        request.gripper_type = gripper_type
+
+        future = self._retract_from_tool_changer_client.call_async(request)
+
+        try:
+            rclpy.spin_until_future_complete(self, future)
+        except KeyboardInterrupt as kb_error:
+            raise KeyboardInterrupt from kb_error
+
+        if future.result() is not None:
+            response = future.result()
+            if response:
+                self.get_logger().info('Robot is at the tool changer')
+        else:
+            self.get_logger().error(
+                f'Service call failed {future.exception()}')
+            self.get_logger().error('Unable to move the robot to the tool changer')
+
     def _order_sub_callback(self, msg) -> None:
         '''
         Callback function for order subscriber
@@ -151,6 +356,7 @@ class RWA4Node(Node):
         '''
 
         if len(self._orders) and not self._table1_cam_sub_msg:
+            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/table1_camera/image')
             self._table1_cam_sub_msg = True  # only process first message after each order received
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table1_camera/image')
 
@@ -171,6 +377,7 @@ class RWA4Node(Node):
         '''
 
         if len(self._orders) and not self._table2_cam_sub_msg:
+            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/table2_camera/image')
             self._table2_cam_sub_msg = True  # only process first message after each order received 
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table2_camera/image')
 
@@ -191,6 +398,7 @@ class RWA4Node(Node):
         '''
 
         if not self._left_bins_cam_sub_msg:
+            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/left_bins_camera/image')
             self._left_bins_cam_sub_msg = True  # only process first message after each order received 
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/left_bins_camera/image')
 
@@ -214,6 +422,7 @@ class RWA4Node(Node):
         '''
 
         if not self._right_bins_cam_sub_msg:
+            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/right_bins_camera/image')
             self._right_bins_cam_sub_msg = True  # only process first message after each order received 
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/right_bins_camera/image')
 
@@ -266,6 +475,7 @@ class RWA4Node(Node):
                                 f'{self._node_name}: part {part.part.type} {part.part.color} not found')
 
                 self._log_order = False  # reset flag
+
 
     def _multiply_pose(self, pose1: Pose, pose2: Pose) -> Pose:
         '''

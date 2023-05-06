@@ -11,8 +11,10 @@ from rclpy.executors import SingleThreadedExecutor, MultiThreadedExecutor
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from rclpy.parameter import ParameterType, Parameter
+from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor
 
 from collections import deque
+import time
 
 import PyKDL
 from geometry_msgs.msg import Pose
@@ -78,45 +80,49 @@ class RWA4Node(Node):
         self._orders = deque()  # queue of orders received
         self._tray_poses = dict()  # dictionary of tray poses
         self._part_poses = dict()  # dictionary of part poses
+        self._tables = {'kts1' : [],
+                        'kts2' : []}  # dictionary of tables for trays
 
         self.get_logger().info(f'{self._node_name}: node initialized')
 
         self.declare_parameter('order_id', None)
-        self.order_id = self.get_parameter('order_id').value
+        self._order_id = int(self.get_parameter('order_id').value)
+        self.get_logger().info(f'{self._node_name}: order_id: {self._order_id}')
 
         qos_profile = QoSProfile(
             reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT,
             history=QoSHistoryPolicy.RMW_QOS_POLICY_HISTORY_KEEP_LAST,
             depth=10)
+        sub_group = MutuallyExclusiveCallbackGroup()  # subscriber callback group
 
         # Subscribers
         self._order_sub = self.create_subscription(OrderMsg, '/ariac/orders',
                                                    self._order_sub_callback,
-                                                   10)
+                                                   10, callback_group=sub_group)
 
         self._table1_cam_sub_msg = False
         self._table1_cam_sub = self.create_subscription(AdvancedLogicalCameraImage, 
                                                         '/ariac/sensors/table1_camera/image',
                                                         self._table1_cam_sub_callback,
-                                                        qos_profile)
+                                                        qos_profile, callback_group=sub_group)
 
         self._table2_cam_sub_msg = False
         self._table2_cam_sub = self.create_subscription(AdvancedLogicalCameraImage, 
                                                         '/ariac/sensors/table2_camera/image',
                                                         self._table2_cam_sub_callback,
-                                                        qos_profile)
+                                                        qos_profile, callback_group=sub_group)
     
         self._left_bins_cam_sub_msg = False
         self._left_bins_cam_sub = self.create_subscription(AdvancedLogicalCameraImage, 
                                                            '/ariac/sensors/left_bins_camera/image',
                                                            self._left_bins_cam_sub_callback,
-                                                           qos_profile)
+                                                           qos_profile, callback_group=sub_group)
 
         self._right_bins_cam_sub_msg = False
         self._right_bins_cam_sub = self.create_subscription(AdvancedLogicalCameraImage,
                                                             '/ariac/sensors/right_bins_camera/image',
                                                             self._right_bins_cam_sub_callback,
-                                                            qos_profile)
+                                                            qos_profile, callback_group=sub_group)
 
         self._log_order = False
         self._log_timer = self.create_timer(1.0, self._log_timer_callback)
@@ -159,32 +165,46 @@ class RWA4Node(Node):
 
         if self._competition_state == CompetitionState.READY and not self._competition_started:
             self.start_competition()
+        
+        while self._competition_state != CompetitionState.ORDER_ANNOUNCEMENTS_DONE:
+            rclpy.spin_once(self)
 
         # exit the callback if the kit is completed
         if self._kit_completed:
             return
         
         # Get order details
-        for order in self._orders:
-            if order.id == self.order_id:
-                curr_order = order
-                break
+        if self._competition_started:
+            self.get_logger().info(f'{self._orders}')
+            curr_order = None
+            for order in self._orders:
+                self.get_logger().info(f'{self._order_id} {order.id}')
+                if order.id == self._order_id:
+                    curr_order = order
+                    break
+            self.get_logger().info(f'{self._node_name}: curr_order: {curr_order}')
 
-        tray_id = curr_order.kitting_task.tray_id
-        if tray_id in self._tray_poses:
-            self.get_logger().info(f'{self._tray_poses[tray_id]}')
-        else:
-            self.get_logger().info(
-                f'{self._node_name}: tray {tray_id} not found')
+        # tray_id = curr_order.kitting_task.tray_id
+        # if tray_id in self._tray_poses:
+        #     self.get_logger().info(f'{self._tray_poses[tray_id]}')
+        # else:
+        #     self.get_logger().info(
+        #         f'{self._node_name}: tray {tray_id} not found')
 
-        tray_pose = self._tray_poses[tray_id].pose
+        # tray_pose = self._tray_poses[tray_id].pose
 
-        # move robot home
-        self.move_robot_home("floor_robot")
+        # for table in self._tables:
+        #     if tray_id in self._tables[table]:
+        #         tray_table = table
+        #         break
+        # self.get_logger.info(f'tray_table: {tray_table}')
 
-        # change gripper type
-        self.goto_tool_changer("floor_robot", "kts2", "trays")
-        self.retract_from_tool_changer("floor_robot", "kts2", "trays")
+        # # move robot home
+        # self.move_robot_home("floor_robot")
+
+        # # change gripper type
+        # self.goto_tool_changer("floor_robot", "kts2", "trays")
+        # self.retract_from_tool_changer("floor_robot", "kts2", "trays")
 
         # # to ignore function calls in this callback
         # self._kit_completed = True
@@ -344,6 +364,8 @@ class RWA4Node(Node):
         self._left_bins_cam_sub_msg = False  # reset left bins camera message received flag
         self._right_bins_cam_sub_msg = False  # reset right bins camera message received flag
 
+        self.get_logger().info(f'{self._orders}')
+
     def _table1_cam_sub_callback(self, msg) -> None:
         '''
         Callback function for table 1 camera subscriber
@@ -363,6 +385,9 @@ class RWA4Node(Node):
             for tray in msg.tray_poses:
                 tray_pose_w = self._multiply_pose(msg.sensor_pose, tray.pose)
                 self._tray_poses[tray.id] = KitTrayPose(tray.id, tray_pose_w)
+                if tray.id not in self._tables["kts1"]:
+                    # self._tables["kts1"] = set()
+                    self._tables["kts1"].append(tray.id)
                 self.get_logger().debug(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
 
     def _table2_cam_sub_callback(self, msg) -> None:
@@ -384,6 +409,9 @@ class RWA4Node(Node):
             for tray in msg.tray_poses:
                 tray_pose_w = self._multiply_pose(msg.sensor_pose, tray.pose)
                 self._tray_poses[tray.id] = KitTrayPose(tray.id, tray_pose_w)
+                if tray.id not in self._tables["kts2"]:
+                    # self._tables["kts2"] = set()
+                    self._tables["kts2"].append(tray.id)
                 self.get_logger().debug(f'{self._node_name}: tray pose in world:\n{tray_pose_w}')
 
     def _left_bins_cam_sub_callback(self, msg) -> None:

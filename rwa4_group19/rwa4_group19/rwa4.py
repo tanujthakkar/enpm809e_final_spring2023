@@ -22,7 +22,7 @@ from std_srvs.srv import Trigger
 
 from ariac_msgs.msg import Order as OrderMsg
 from ariac_msgs.msg import AdvancedLogicalCameraImage, CompetitionState
-from ariac_msgs.srv import ChangeGripper, VacuumGripperControl
+from ariac_msgs.srv import ChangeGripper, VacuumGripperControl, MoveAGV
 from competitor_interfaces.msg import Robots as RobotsMsg
 from competitor_interfaces.srv import EnterToolChanger, ExitToolChanger, PickupTray, \
                                       MoveTrayToAGV, PlaceTrayOnAGV, RetractFromAGV, \
@@ -190,13 +190,17 @@ class RWA4Node(Node):
             PlacePartInTray, '/competitor/floor_robot/place_part_in_tray',
             callback_group=service_group)
 
-        # self._agv3_lock_tray_client = self.create_client(
-        #     Trigger, '/ariac/agv3_lock_tray',
-        #     callback_group=service_group)
+        self._agv_lock_tray_clients = {}
+        for i in range(4):
+            self._agv_lock_tray_clients[f'agv{i}'] = self.create_client(
+                                                Trigger, f'/ariac/agv{i}_lock_tray',
+                                                callback_group=service_group)
 
-        # self._move_agv3_client = self.create_client(
-        #     MoveAGV, '/ariac/move_agv3',
-        #     callback_group=service_group)
+        self._move_agv_clients = {}
+        for i in range(4):
+            self._move_agv_clients[f'agv{i}'] = self.create_client(
+                                            MoveAGV, f'/ariac/move_agv{i}',
+                                            callback_group=service_group)
 
         self._floor_robot_change_gripper_client = self.create_client(
             ChangeGripper, '/ariac/floor_robot_change_gripper',
@@ -292,6 +296,13 @@ class RWA4Node(Node):
                         self._part_poses[bin][part.part.type][part.part.color].pop(0)  # remove part from list
                     else:
                         self.get_logger().info(f'{self._node_name}: part {part.part.type} {part.part.color} not found')
+
+        # move robot home
+        self.move_robot_home("floor_robot")
+
+        # move agv to warehouse
+        self.lock_agv(agv)
+        self.move_agv_to_warehouse(agv)
 
         self.get_logger().info(f'{self._node_name}: kitting completed')
 
@@ -673,6 +684,51 @@ class RWA4Node(Node):
             return True
         else:
             self.get_logger().error(f'Unable to place part in {agv}')
+            return False
+        
+    def lock_agv(self, agv):
+        '''
+        Lock AGV
+
+        Args:
+            agv (str): AGV name
+
+        Returns:
+            bool: True if successful, False otherwise
+        '''
+
+        request = Trigger.Request()
+        future = self._agv_lock_tray_clients[agv].call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            self.get_logger().info(f'Locked {agv}')
+            return True
+        else:
+            self.get_logger().error(f'Unable to lock {agv}')
+            return False
+    
+    def move_agv_to_warehouse(self, agv):
+        '''
+        Move AGV to warehouse
+
+        Args:
+            agv (str): AGV name
+
+        Returns:
+            bool: True if successful, False otherwise
+        '''
+
+        request = MoveAGV.Request()
+        request.location = 3
+        future = self._move_agv_clients[agv].call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            self.get_logger().info(f'Moved {agv} to warehouse')
+            return True
+        else:
+            self.get_logger().error(f'Unable to move {agv} to warehouse')
             return False
 
     def floor_robot_change_gripper(self, gripper_type):

@@ -149,12 +149,10 @@ class RWA4Node(Node):
         self._start_competition_client = self.create_client(
             Trigger, '/ariac/start_competition')
     
-        # Service client for moving the floor robot to the home position
         self._floor_robot_go_home_client = self.create_client(
             Trigger, '/competitor/floor_robot/go_home',
             callback_group=service_group)
 
-        # Service client for entering the gripper slot
         self._enter_tool_changer_client = self.create_client(
             EnterToolChanger, '/competitor/floor_robot/enter_tool_changer',
             callback_group=service_group)
@@ -227,6 +225,7 @@ class RWA4Node(Node):
         Callback for the timer that triggers the robot actions
         '''
         
+        # exit the callback if the competition has not started
         if self._competition_state != CompetitionState.ORDER_ANNOUNCEMENTS_DONE:
             return
 
@@ -236,24 +235,21 @@ class RWA4Node(Node):
         
         # Get order details
         if self._competition_started:
-            self.get_logger().info(f'{self._orders}')
             curr_order = None
             for order in self._orders:
-                self.get_logger().info(f'{self._order_id} {order.id}')
                 if int(order.id) == int(self._order_id):
                     curr_order = order
                     break
-            self.get_logger().info(f'{self._node_name}: curr_order: {curr_order}')
+            self.get_logger().info(f'Current Order: {curr_order}')
         
         agv = "agv" + str(curr_order.kitting_task.agv_number)
-        self.get_logger().info(f'{self._node_name}: agv: {agv}')
+        self.get_logger().info(f'AGV: {agv}')
 
         tray_id = curr_order.kitting_task.tray_id
         if tray_id in self._tray_poses:
-            self.get_logger().info(f'{self._tray_poses[tray_id]}')
+            self.get_logger().info(f'Tray: {self._tray_poses[tray_id]}')
         else:
-            self.get_logger().info(
-                f'{self._node_name}: tray {tray_id} not found')
+            self.get_logger().info(f'Tray {tray_id} not found')
 
         tray_pose = self._tray_poses[tray_id].pose
 
@@ -262,6 +258,7 @@ class RWA4Node(Node):
             if tray_id in self._tables[table]:
                 tray_table = table
                 break
+        self.get_logger().info(f'Tray Table: {tray_table}')
 
         # move robot home
         self.move_robot_home("floor_robot")
@@ -280,14 +277,13 @@ class RWA4Node(Node):
         self.goto_tool_changer("floor_robot", tray_table, "parts")
         self.retract_from_tool_changer("floor_robot", tray_table, "parts")
 
-        self.get_logger().info(f'Part Poses: {self._part_poses}')
-
         # service parts
         for part in curr_order.kitting_task.parts:
             for bin in self._part_poses:
                 if part.part.type in self._part_poses[bin]:
                     if part.part.color in self._part_poses[bin][part.part.type]:
-                        self.get_logger().info(f'{self._part_poses[bin][part.part.type][part.part.color]}')
+                        self.get_logger().info(
+                            f'Part {Part.COLOR[part.part.color]} {Part.TYPE[part.part.type]} found in bin {bin}')
                         curr_part = self._part_poses[bin][part.part.type][part.part.color][0]  # get first part in list
                         quadrant = part.quadrant
 
@@ -296,11 +292,10 @@ class RWA4Node(Node):
                         self.place_part_in_tray("floor_robot", agv, quadrant)
                         self.retract_from_agv("floor_robot", agv)
 
-                        self.get_logger().info(f'{self._node_name}: part {Part.TYPE[part.part.type]} {Part.COLOR[part.part.color]} found in bin {bin}')
                         self._part_poses[bin][part.part.type][part.part.color].pop(0)  # remove part from list
                         break
                     else:
-                        self.get_logger().info(f'{self._node_name}: part {part.part.type} {part.part.color} not found')
+                        self.get_logger().info(f'Part {part.part.type} {part.part.color} not found')
 
         # move robot home
         self.move_robot_home("floor_robot")
@@ -341,29 +336,30 @@ class RWA4Node(Node):
         else:
             self.get_logger().warn('Unable to start competition')
 
-    def move_robot_home(self, robot_name):
-        '''Move one of the robots to its home position.
+    def move_robot_home(self, robot):
+        '''
+        Move the robot to home position
 
-        Arguments:
-            robot_name -- Name of the robot to move home
+        Args:
+            robot (str): Name of the robot
         '''
         request = Trigger.Request()
 
-        if robot_name == 'floor_robot':
+        if robot == 'floor_robot':
             if not self._floor_robot_go_home_client.wait_for_service(timeout_sec=1.0):
                 self.get_logger().error('Robot commander node not running')
                 return
 
             future = self._floor_robot_go_home_client.call_async(request)
         else:
-            self.get_logger().error(f'Robot name: ({robot_name}) is not valid')
+            self.get_logger().error(f'Robot name: ({robot}) is not valid')
             return
 
         # Wait until the service call is completed
         rclpy.spin_until_future_complete(self, future)
 
         if future.result().success:
-            self.get_logger().info(f'Moved {robot_name} to home position')
+            self.get_logger().info(f'Moved {robot} to home position')
         else:
             self.get_logger().warn(future.result().message)
     
@@ -813,8 +809,6 @@ class RWA4Node(Node):
         self._left_bins_cam_sub_msg = False  # reset left bins camera message received flag
         self._right_bins_cam_sub_msg = False  # reset right bins camera message received flag
 
-        self.get_logger().info(f'{self._orders}')
-
     def _table1_cam_sub_callback(self, msg) -> None:
         '''
         Callback function for table 1 camera subscriber
@@ -827,7 +821,7 @@ class RWA4Node(Node):
         '''
 
         if len(self._orders) and not self._table1_cam_sub_msg:
-            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/table1_camera/image')
+            self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table1_camera/image')
             self._table1_cam_sub_msg = True  # only process first message after each order received
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table1_camera/image')
 
@@ -851,7 +845,7 @@ class RWA4Node(Node):
         '''
 
         if len(self._orders) and not self._table2_cam_sub_msg:
-            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/table2_camera/image')
+            self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table2_camera/image')
             self._table2_cam_sub_msg = True  # only process first message after each order received 
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/table2_camera/image')
 
@@ -875,7 +869,7 @@ class RWA4Node(Node):
         '''
 
         if not self._left_bins_cam_sub_msg:
-            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/left_bins_camera/image')
+            self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/left_bins_camera/image')
             self._left_bins_cam_sub_msg = True  # only process first message after each order received 
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/left_bins_camera/image')
 
@@ -887,8 +881,6 @@ class RWA4Node(Node):
                     self._part_poses['left_bins'][part.part.type][part.part.color] = list()
                 self._part_poses['left_bins'][part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
             
-            self.get_logger().info(f'{self._node_name}: part poses in left bins:\n{self._part_poses["left_bins"]}')
-
     def _right_bins_cam_sub_callback(self, msg) -> None:
         '''
         Callback function for right bins camera subscriber
@@ -901,7 +893,7 @@ class RWA4Node(Node):
         '''
 
         if not self._right_bins_cam_sub_msg:
-            self.get_logger().info(f'{self._node_name}: received camera image from topic /ariac/sensors/right_bins_camera/image')
+            self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/right_bins_camera/image')
             self._right_bins_cam_sub_msg = True  # only process first message after each order received 
             self.get_logger().debug(f'{self._node_name}: received camera image from topic /ariac/sensors/right_bins_camera/image')
 
@@ -912,8 +904,6 @@ class RWA4Node(Node):
                 if part.part.color not in self._part_poses['right_bins'][part.part.type]:
                     self._part_poses['right_bins'][part.part.type][part.part.color] = list()
                 self._part_poses['right_bins'][part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
-            
-            self.get_logger().info(f'{self._node_name}: part poses in right bins:\n{self._part_poses["right_bins"]}')
     
     def _log_timer_callback(self) -> None:
         '''

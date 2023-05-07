@@ -24,7 +24,9 @@ from ariac_msgs.msg import Order as OrderMsg
 from ariac_msgs.msg import AdvancedLogicalCameraImage, CompetitionState
 from ariac_msgs.srv import ChangeGripper, VacuumGripperControl
 from competitor_interfaces.msg import Robots as RobotsMsg
-from competitor_interfaces.srv import EnterToolChanger, ExitToolChanger, PickupTray, MoveTrayToAGV, PlaceTrayOnAGV, RetractFromAGV
+from competitor_interfaces.srv import EnterToolChanger, ExitToolChanger, PickupTray, \
+                                      MoveTrayToAGV, PlaceTrayOnAGV, RetractFromAGV, \
+                                      PickupPart, MovePartToAGV, PlacePartInTray
 
 from rwa4_group19.rwa4_msgs import Order, KitTrayPose, PartPose
 from robot_commander.robot_commander_interface import RobotCommanderInterface
@@ -80,7 +82,8 @@ class RWA4Node(Node):
         self._node_name = node_name
         self._orders = deque()  # queue of orders received
         self._tray_poses = dict()  # dictionary of tray poses
-        self._part_poses = dict()  # dictionary of part poses
+        self._part_poses = {'left_bins' : dict(),
+                            'right_bins' : dict()}  # dictionary of part poses
         self._tables = {'kts1' : [],
                         'kts2' : []}  # dictionary of tables for trays
 
@@ -126,7 +129,7 @@ class RWA4Node(Node):
                                                             qos_profile, callback_group=sub_group)
 
         self._log_order = False
-        self._log_timer = self.create_timer(1.0, self._log_timer_callback)
+        self._log_timer = self.create_timer(0.1, self._log_timer_callback)
 
         timer_group = MutuallyExclusiveCallbackGroup()  # timer callback group
         service_group = MutuallyExclusiveCallbackGroup()  # service callback group
@@ -175,17 +178,17 @@ class RWA4Node(Node):
             RetractFromAGV, '/competitor/floor_robot/retract_from_agv',
             callback_group=service_group)
 
-        # self._pickup_part_client = self.create_client(
-        #     PickupPart, '/competitor/floor_robot/pickup_part',
-        #     callback_group=service_group)
+        self._pickup_part_client = self.create_client(
+            PickupPart, '/competitor/floor_robot/pickup_part',
+            callback_group=service_group)
 
-        # self._move_part_to_agv_client = self.create_client(
-        #     MovePartToAGV, '/competitor/floor_robot/move_part_to_agv',
-        #     callback_group=service_group)
+        self._move_part_to_agv_client = self.create_client(
+            MovePartToAGV, '/competitor/floor_robot/move_part_to_agv',
+            callback_group=service_group)
 
-        # self._place_part_in_tray_client = self.create_client(
-        #     PlacePartInTray, '/competitor/floor_robot/place_part_in_tray',
-        #     callback_group=service_group)
+        self._place_part_in_tray_client = self.create_client(
+            PlacePartInTray, '/competitor/floor_robot/place_part_in_tray',
+            callback_group=service_group)
 
         # self._agv3_lock_tray_client = self.create_client(
         #     Trigger, '/ariac/agv3_lock_tray',
@@ -258,25 +261,37 @@ class RWA4Node(Node):
         # move robot home
         self.move_robot_home("floor_robot")
 
-        # change gripper type to tray gripper
+        # change gripper tool to tray gripper
         self.goto_tool_changer("floor_robot", tray_table, "trays")
-        self.floor_robot_change_gripper("TRAY_GRIPPER")
         self.retract_from_tool_changer("floor_robot", tray_table, "trays")
 
-        # tray_pose = Pose()
-        # tray_pose.position.x = -1.730
-        # tray_pose.position.y = 5.840
-        # tray_pose.position.z = 0.734
-        # tray_pose.orientation.x = -8.308654238294632e-09
-        # tray_pose.orientation.y = -7.85163622705708e-10
-        # tray_pose.orientation.z = -2.633407274744813e-14
-        # tray_pose.orientation.w = 1.0
-
-        # move to tray
+        # move to tray and transport to agv
         self.pickup_tray("floor_robot", tray_id, tray_pose, tray_table)
         self.move_tray_to_agv("floor_robot", tray_pose, agv)
         self.place_tray("floor_robot", agv, tray_id)
         self.retract_from_agv("floor_robot", agv)
+
+        # change gripper tool to part gripper
+        self.goto_tool_changer("floor_robot", tray_table, "parts")
+        self.retract_from_tool_changer("floor_robot", tray_table, "parts")
+
+        # service parts
+        for part in curr_order.kitting_task.parts:
+            for bin in self._part_poses:
+                if part.part.type in self._part_poses[bin]:
+                    if part.part.color in self._part_poses[bin][part.part.type]:
+                        curr_part = self._part_poses[bin][part.part.type][part.part.color][0]  # get first part in list
+                        quadrant = part.quadrant
+
+                        self.pickup_part("floor_robot", part.part.type, part.part.color, curr_part.pose, bin)
+                        self.move_part_to_agv("floor_robot", curr_part.pose, agv, quadrant)
+                        self.place_part_in_tray("floor_robot", agv, quadrant)
+                        self.retract_from_agv("floor_robot", agv)
+
+                        self.get_logger().info(f'{self._node_name}: part {part.part.type} {part.part.color} found in bin {bin}')
+                        self._part_poses[bin][part.part.type][part.part.color].pop(0)  # remove part from list
+                    else:
+                        self.get_logger().info(f'{self._node_name}: part {part.part.type} {part.part.color} not found')
 
         self.get_logger().info(f'{self._node_name}: kitting completed')
 
@@ -372,6 +387,12 @@ class RWA4Node(Node):
             response = future.result()
             if response:
                 self.get_logger().info('Robot is inside tool changer')
+                if gripper_type == "trays":
+                    self.get_logger().info('Changing gripper tool to TRAY_GRIPPER')
+                    self.floor_robot_change_gripper("TRAY_GRIPPER")
+                else:
+                    self.get_logger().info('Changing gripper tool to PART_GRIPPER')
+                    self.floor_robot_change_gripper("PART_GRIPPER")
         else:
             self.get_logger().error(
                 f'Service call failed {future.exception()}')
@@ -416,35 +437,6 @@ class RWA4Node(Node):
             self.get_logger().error(
                 f'Service call failed {future.exception()}')
             self.get_logger().error('Unable to move the robot to the tool changer')
-        
-    def floor_robot_change_gripper(self, gripper_type):
-        '''
-        Change the floor robot's gripper type
-
-        Args:
-            gripper_type (str): Gripper type
-
-        Returns:
-            bool: True if successful, False otherwise
-        '''
-
-        request = ChangeGripper.Request()
-        if gripper_type == "TRAY_GRIPPER":
-            request.gripper_type = 2
-        elif gripper_type == "PART_GRIPPER":
-            request.gripper_type = 1
-        else:
-            raise ValueError('Invalid gripper type')
-
-        future = self._floor_robot_change_gripper_client.call_async(request)
-        rclpy.spin_until_future_complete(self, future)
-
-        if future.result().success:
-            self.get_logger().info(f'Changed floor robot gripper to {gripper_type}')
-            return True
-        else:
-            self.get_logger().error(f'Unable to change floor robot gripper to {gripper_type}')
-            return False
     
     def pickup_tray(self, robot, tray_id, tray_pose, station):
         '''
@@ -542,7 +534,7 @@ class RWA4Node(Node):
         rclpy.spin_until_future_complete(self, future)
 
         if future.result().success:
-            self.get_logger().info(f'Enabling gripper for floor robot')
+            self.get_logger().info(f'Disabling gripper for floor robot')
             self.floor_robot_gripper_control(False)
             self.get_logger().info(f'Placed tray {tray_id} on {agv}')
             return True
@@ -577,6 +569,141 @@ class RWA4Node(Node):
             return True
         else:
             self.get_logger().error(f'Unable to retract from {agv}')
+            return False
+    
+    def pickup_part(self, robot, part_type, part_color, part_pose, bin_side):
+        '''
+        Pickup part from bin
+
+        Args:
+            robot (str): Robot name
+            part_type (str): Part type
+            part_color (str): Part color
+            part_pose (Pose): Pose of the part
+            bin_side (str): Bin side
+
+        Returns:
+            bool: True if successful, False otherwise
+        '''
+
+        request = PickupPart.Request()
+        if robot == "floor_robot":
+            request.robot = RobotsMsg.FLOOR_ROBOT
+        else:
+            raise ValueError('Invalid robot name')
+        request.part_type = part_type
+        request.part_color = part_color
+        request.part_pose = part_pose
+        request.bin_side = bin_side
+
+        future = self._pickup_part_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            self.get_logger().info(f'Enabling gripper for floor robot')
+            self.floor_robot_gripper_control(True)
+            self.get_logger().info(f'Picked up {part_color} {part_type} from {bin_side}')
+            return True
+        else:
+            self.get_logger().error(
+                f'Unable to pick up {part_color} {part_type} from {bin_side}')
+            return False
+    
+    def move_part_to_agv(self, robot, part_pose, agv, quadrant):
+        '''
+        Move part to AGV
+
+        Args:
+            robot (str): Robot name
+            part_pose (Pose): Pose of the part
+            agv (str): AGV name
+            quadrant (int): Quadrant of the AGV
+
+        Returns:
+            bool: True if successful, False otherwise
+        '''
+
+        request = MovePartToAGV.Request()
+        if robot == "floor_robot":
+            request.robot = RobotsMsg.FLOOR_ROBOT
+        else:
+            raise ValueError('Invalid robot name')
+        request.part_pose = part_pose
+        request.agv = agv
+        request.quadrant = quadrant
+
+        future = self._move_part_to_agv_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            self.get_logger().info(f'Moved part to {agv}')
+            return True
+        else:
+            self.get_logger().error(f'Unable to move part to {agv}')
+            return False
+
+    def place_part_in_tray(self, robot, agv, quadrant):
+        '''
+        Place part in tray
+
+        Args:
+            robot (str): Robot name
+            agv (str): AGV name
+            quadrant (int): Quadrant of the AGV
+
+        Returns:
+            bool: True if successful, False otherwise
+        '''
+
+        request = PlacePartInTray.Request()
+        if robot == "floor_robot":
+            request.robot = RobotsMsg.FLOOR_ROBOT
+        else:
+            raise ValueError('Invalid robot name')
+        request.agv = agv
+        request.quadrant = quadrant
+
+        future = self._place_part_in_tray_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            self.get_logger().info(f'Disabling gripper for floor robot')
+            self.floor_robot_gripper_control(False)
+            self.get_logger().info(f'Placed part in {agv}')
+            return True
+        else:
+            self.get_logger().error(f'Unable to place part in {agv}')
+            return False
+
+    def floor_robot_change_gripper(self, gripper_type):
+        '''
+        Change the floor robot's gripper type
+
+        Args:
+            gripper_type (str): Gripper type
+
+        Returns:
+            bool: True if successful, False otherwise
+        '''
+
+        request = ChangeGripper.Request()
+        if gripper_type == "TRAY_GRIPPER":
+            request.gripper_type = 2
+        elif gripper_type == "PART_GRIPPER":
+            request.gripper_type = 1
+        else:
+            raise ValueError('Invalid gripper type')
+
+        future = self._floor_robot_change_gripper_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            self.get_logger().info(
+                f'Changed floor robot gripper to {gripper_type}')
+            return True
+        else:
+            self.get_logger().error(
+                f'Unable to change floor robot gripper to {gripper_type}')
             return False
     
     def floor_robot_gripper_control(self, enable):
@@ -693,11 +820,13 @@ class RWA4Node(Node):
 
             for part in msg.part_poses:
                 part_pose_w = self._multiply_pose(msg.sensor_pose, part.pose)
-                if part.part.type not in self._part_poses:
-                    self._part_poses[part.part.type] = dict()
-                if part.part.color not in self._part_poses[part.part.type]:
-                    self._part_poses[part.part.type][part.part.color] = list()
-                self._part_poses[part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
+                if part.part.type not in self._part_poses['left_bins']:
+                    self._part_poses['left_bins'][part.part.type] = dict()
+                if part.part.color not in self._part_poses['left_bins'][part.part.type]:
+                    self._part_poses['left_bins'][part.part.type][part.part.color] = list()
+                self._part_poses['left_bins'][part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
+            
+            self.get_logger().info(f'{self._node_name}: part poses in left bins:\n{self._part_poses["left_bins"]}')
 
     def _right_bins_cam_sub_callback(self, msg) -> None:
         '''
@@ -717,11 +846,13 @@ class RWA4Node(Node):
 
             for part in msg.part_poses:
                 part_pose_w = self._multiply_pose(msg.sensor_pose, part.pose)
-                if part.part.type not in self._part_poses:
-                    self._part_poses[part.part.type] = dict()
-                if part.part.color not in self._part_poses[part.part.type]:
-                    self._part_poses[part.part.type][part.part.color] = list()
-                self._part_poses[part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
+                if part.part.type not in self._part_poses['right_bins']:
+                    self._part_poses['right_bins'][part.part.type] = dict()
+                if part.part.color not in self._part_poses['right_bins'][part.part.type]:
+                    self._part_poses['right_bins'][part.part.type][part.part.color] = list()
+                self._part_poses['right_bins'][part.part.type][part.part.color].append(PartPose(part.part, part_pose_w))
+            
+            self.get_logger().info(f'{self._node_name}: part poses in right bins:\n{self._part_poses["right_bins"]}')
     
     def _log_timer_callback(self) -> None:
         '''
@@ -753,15 +884,17 @@ class RWA4Node(Node):
                     self.get_logger().info(
                         f'{self._node_name}: tray {tray_id} not found')
 
+                part_poses = self._part_poses.copy()  # make a copy of part poses
                 parts = latest_order.kitting_task.parts
                 for part in parts:
-                    if part.part.type in self._part_poses:
-                        if part.part.color in self._part_poses[part.part.type]:
-                            self.get_logger().info(f'{self._part_poses[part.part.type][part.part.color][0]}')
-                            self._part_poses[part.part.type][part.part.color].pop(0)  # remove part from list
-                        else:
-                            self.get_logger().info(
-                                f'{self._node_name}: part {part.part.type} {part.part.color} not found')
+                    for bin in part_poses:
+                        if part.part.type in part_poses[bin]:
+                            if part.part.color in part_poses[bin][part.part.type]:
+                                self.get_logger().info(f'{part_poses[bin][part.part.type][part.part.color][0]}')
+                                part_poses[bin][part.part.type][part.part.color].pop(0)  # remove part from list
+                            else:
+                                self.get_logger().info(
+                                    f'{self._node_name}: part {part.part.type} {part.part.color} not found')
 
                 self._log_order = False  # reset flag
 

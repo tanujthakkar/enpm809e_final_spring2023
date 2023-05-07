@@ -22,7 +22,7 @@ from std_srvs.srv import Trigger
 
 from ariac_msgs.msg import Order as OrderMsg
 from ariac_msgs.msg import AdvancedLogicalCameraImage, CompetitionState
-from ariac_msgs.srv import ChangeGripper
+from ariac_msgs.srv import ChangeGripper, VacuumGripperControl
 from competitor_interfaces.msg import Robots as RobotsMsg
 from competitor_interfaces.srv import EnterToolChanger, ExitToolChanger, PickupTray, MoveTrayToAGV, PlaceTrayOnAGV, RetractFromAGV
 
@@ -199,70 +199,86 @@ class RWA4Node(Node):
             ChangeGripper, '/ariac/floor_robot_change_gripper',
             callback_group=service_group)
 
-        # self._floor_robot_enable_gripper_client = self.create_client(
-        #     VacuumGripperControl, '/ariac/floor_robot_enable_vacuum_gripper',
-        #     callback_group=service_group)
+        self._floor_robot_enable_gripper_client = self.create_client(
+            VacuumGripperControl, '/ariac/floor_robot_enable_gripper',
+            callback_group=service_group)
+    
+        while self._competition_state != CompetitionState.READY:
+            self.get_logger().info('Waiting for competition to be ready...')
+            rclpy.spin_once(self)
+
+        if self._competition_state == CompetitionState.READY:
+            self.get_logger().info('Competition is ready, starting...')
+            self.start_competition()
+            while self._competition_state != CompetitionState.ORDER_ANNOUNCEMENTS_DONE:
+                self.get_logger().info('Waiting for competition to start...')
+                rclpy.spin_once(self)
 
     def _robot_action_timer_callback(self):
         '''
         Callback for the timer that triggers the robot actions
         '''
-
-        if self._competition_state == CompetitionState.READY and not self._competition_started:
-            self.start_competition()
         
-        # while self._competition_state != CompetitionState.ORDER_ANNOUNCEMENTS_DONE:
-        #     rclpy.spin_once(self)
+        if self._competition_state != CompetitionState.ORDER_ANNOUNCEMENTS_DONE:
+            return
 
         # exit the callback if the kit is completed
         if self._kit_completed:
             return
         
         # Get order details
-        # if self._competition_started:
-        #     self.get_logger().info(f'{self._orders}')
-        #     curr_order = None
-        #     for order in self._orders:
-        #         self.get_logger().info(f'{self._order_id} {order.id}')
-        #         if order.id == self._order_id:
-        #             curr_order = order
-        #             break
-        #     self.get_logger().info(f'{self._node_name}: curr_order: {curr_order}')
+        if self._competition_started:
+            self.get_logger().info(f'{self._orders}')
+            curr_order = None
+            for order in self._orders:
+                self.get_logger().info(f'{self._order_id} {order.id}')
+                if int(order.id) == int(self._order_id):
+                    curr_order = order
+                    break
+            self.get_logger().info(f'{self._node_name}: curr_order: {curr_order}')
+        
+        agv = "agv" + str(curr_order.kitting_task.agv_number)
+        self.get_logger().info(f'{self._node_name}: agv: {agv}')
 
-        # tray_id = curr_order.kitting_task.tray_id
-        # if tray_id in self._tray_poses:
-        #     self.get_logger().info(f'{self._tray_poses[tray_id]}')
-        # else:
-        #     self.get_logger().info(
-        #         f'{self._node_name}: tray {tray_id} not found')
+        tray_id = curr_order.kitting_task.tray_id
+        if tray_id in self._tray_poses:
+            self.get_logger().info(f'{self._tray_poses[tray_id]}')
+        else:
+            self.get_logger().info(
+                f'{self._node_name}: tray {tray_id} not found')
 
-        # tray_pose = self._tray_poses[tray_id].pose
+        tray_pose = self._tray_poses[tray_id].pose
 
-        # for table in self._tables:
-        #     if tray_id in self._tables[table]:
-        #         tray_table = table
-        #         break
-        # self.get_logger.info(f'tray_table: {tray_table}')
+        tray_table = None
+        for table in self._tables:
+            if tray_id in self._tables[table]:
+                tray_table = table
+                break
 
         # move robot home
         self.move_robot_home("floor_robot")
 
         # change gripper type to tray gripper
-        self.goto_tool_changer("floor_robot", "kts2", "trays")
+        self.goto_tool_changer("floor_robot", tray_table, "trays")
         self.floor_robot_change_gripper("TRAY_GRIPPER")
-        self.retract_from_tool_changer("floor_robot", "kts2", "trays")
+        self.retract_from_tool_changer("floor_robot", tray_table, "trays")
 
-        tray_pose = Pose()
-        tray_pose.position.x = -1.730
-        tray_pose.position.y = 5.840
-        tray_pose.position.z = 0.734
-        tray_pose.orientation.x = -8.308654238294632e-09
-        tray_pose.orientation.y = -7.85163622705708e-10
-        tray_pose.orientation.z = -2.633407274744813e-14
-        tray_pose.orientation.w = 1.0
+        # tray_pose = Pose()
+        # tray_pose.position.x = -1.730
+        # tray_pose.position.y = 5.840
+        # tray_pose.position.z = 0.734
+        # tray_pose.orientation.x = -8.308654238294632e-09
+        # tray_pose.orientation.y = -7.85163622705708e-10
+        # tray_pose.orientation.z = -2.633407274744813e-14
+        # tray_pose.orientation.w = 1.0
 
         # move to tray
-        self.pickup_tray("floor_robot", 8, tray_pose, "kts2")
+        self.pickup_tray("floor_robot", tray_id, tray_pose, tray_table)
+        self.move_tray_to_agv("floor_robot", tray_pose, agv)
+        self.place_tray("floor_robot", agv, tray_id)
+        self.retract_from_agv("floor_robot", agv)
+
+        self.get_logger().info(f'{self._node_name}: kitting completed')
 
         # to ignore function calls in this callback
         self._kit_completed = True
@@ -462,10 +478,129 @@ class RWA4Node(Node):
         rclpy.spin_until_future_complete(self, future)
 
         if future.result().success:
+            self.get_logger().info(f'Enabling gripper for floor robot')
+            self.floor_robot_gripper_control(True)
             self.get_logger().info(f'Picked up tray {tray_id} from table {station}')
             return True
         else:
             self.get_logger().error(f'Unable to pick up tray {tray_id} from table {station}')
+            return False
+    
+    def move_tray_to_agv(self, robot, tray_pose, agv):
+        '''
+        Move tray to AGV
+
+        Args:
+            robot (str): Robot name
+            tray_pose (Pose): Pose of the tray
+            agv (str): AGV name
+
+        Returns:
+            bool: True if successful, False otherwise
+        '''
+
+        request = MoveTrayToAGV.Request()
+        if robot == "floor_robot":
+            request.robot = RobotsMsg.FLOOR_ROBOT
+        else:
+            raise ValueError('Invalid robot name')
+        request.tray_pose = tray_pose
+        request.agv = agv
+
+        future = self._move_tray_to_agv_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            self.get_logger().info(f'Moved tray to {agv}')
+            return True
+        else:
+            self.get_logger().error(f'Unable to move tray to {agv}')
+            return False
+    
+    def place_tray(self, robot, agv, tray_id):
+        '''
+        Place tray on AGV
+
+        Args:
+            robot (str): Robot name
+            agv (str): AGV name
+            tray_id (int): Tray ID
+
+        Returns:
+            bool: True if successful, False otherwise
+        '''
+
+        request = PlaceTrayOnAGV.Request()
+        if robot == "floor_robot":
+            request.robot = RobotsMsg.FLOOR_ROBOT
+        else:
+            raise ValueError('Invalid robot name')
+        request.agv = agv
+        request.tray_id = tray_id
+
+        future = self._place_tray_on_agv_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            self.get_logger().info(f'Enabling gripper for floor robot')
+            self.floor_robot_gripper_control(False)
+            self.get_logger().info(f'Placed tray {tray_id} on {agv}')
+            return True
+        else:
+            self.get_logger().error(f'Unable to place tray {tray_id} on {agv}')
+            return False
+    
+    def retract_from_agv(self, robot, agv):
+        '''
+        Retract from AGV
+
+        Args:
+            robot (str): Robot name
+            agv (str): AGV name
+
+        Returns:
+            bool: True if successful, False otherwise
+        '''
+
+        request = RetractFromAGV.Request()
+        if robot == "floor_robot":
+            request.robot = RobotsMsg.FLOOR_ROBOT
+        else:
+            raise ValueError('Invalid robot name')
+        request.agv = agv
+
+        future = self._retract_from_agv_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            self.get_logger().info(f'Retracted from {agv}')
+            return True
+        else:
+            self.get_logger().error(f'Unable to retract from {agv}')
+            return False
+    
+    def floor_robot_gripper_control(self, enable):
+        '''
+        Enable/disable floor robot gripper
+
+        Args:
+            enable (bool): True to enable, False to disable
+
+        Returns:
+            bool: True if successful, False otherwise
+        '''
+
+        request = VacuumGripperControl.Request()
+        request.enable = enable
+
+        future = self._floor_robot_enable_gripper_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            self.get_logger().info(f'Floor robot gripper control {enable}')
+            return True
+        else:
+            self.get_logger().error(f'Unable to {enable} floor robot gripper')
             return False
 
     def _order_sub_callback(self, msg) -> None:

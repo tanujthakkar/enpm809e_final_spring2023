@@ -15,6 +15,7 @@ from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor
 
 from collections import deque
 import time
+import copy
 
 import PyKDL
 from geometry_msgs.msg import Pose
@@ -28,7 +29,7 @@ from competitor_interfaces.srv import EnterToolChanger, ExitToolChanger, PickupT
                                       MoveTrayToAGV, PlaceTrayOnAGV, RetractFromAGV, \
                                       PickupPart, MovePartToAGV, PlacePartInTray
 
-from rwa4_group19.rwa4_msgs import Order, KitTrayPose, PartPose
+from rwa4_group19.rwa4_msgs import Order, KitTrayPose, PartPose, Part
 from robot_commander.robot_commander_interface import RobotCommanderInterface
 
 class RWA4Node(Node):
@@ -279,11 +280,14 @@ class RWA4Node(Node):
         self.goto_tool_changer("floor_robot", tray_table, "parts")
         self.retract_from_tool_changer("floor_robot", tray_table, "parts")
 
+        self.get_logger().info(f'Part Poses: {self._part_poses}')
+
         # service parts
         for part in curr_order.kitting_task.parts:
             for bin in self._part_poses:
                 if part.part.type in self._part_poses[bin]:
                     if part.part.color in self._part_poses[bin][part.part.type]:
+                        self.get_logger().info(f'{self._part_poses[bin][part.part.type][part.part.color]}')
                         curr_part = self._part_poses[bin][part.part.type][part.part.color][0]  # get first part in list
                         quadrant = part.quadrant
 
@@ -292,8 +296,9 @@ class RWA4Node(Node):
                         self.place_part_in_tray("floor_robot", agv, quadrant)
                         self.retract_from_agv("floor_robot", agv)
 
-                        self.get_logger().info(f'{self._node_name}: part {part.part.type} {part.part.color} found in bin {bin}')
+                        self.get_logger().info(f'{self._node_name}: part {Part.TYPE[part.part.type]} {Part.COLOR[part.part.color]} found in bin {bin}')
                         self._part_poses[bin][part.part.type][part.part.color].pop(0)  # remove part from list
+                        break
                     else:
                         self.get_logger().info(f'{self._node_name}: part {part.part.type} {part.part.color} not found')
 
@@ -613,11 +618,11 @@ class RWA4Node(Node):
         if future.result().success:
             self.get_logger().info(f'Enabling gripper for floor robot')
             self.floor_robot_gripper_control(True)
-            self.get_logger().info(f'Picked up {part_color} {part_type} from {bin_side}')
+            self.get_logger().info(f'Picked up {Part.COLOR[part_color]} {Part.TYPE[part_type]} from {bin_side}')
             return True
         else:
             self.get_logger().error(
-                f'Unable to pick up {part_color} {part_type} from {bin_side}')
+                f'Unable to pick up {Part.COLOR[part_color]} {Part.TYPE[part_type]} from {bin_side}')
             return False
     
     def move_part_to_agv(self, robot, part_pose, agv, quadrant):
@@ -940,7 +945,7 @@ class RWA4Node(Node):
                     self.get_logger().info(
                         f'{self._node_name}: tray {tray_id} not found')
 
-                part_poses = self._part_poses.copy()  # make a copy of part poses
+                part_poses = copy.deepcopy(self._part_poses)  # make a copy of part poses
                 parts = latest_order.kitting_task.parts
                 for part in parts:
                     for bin in part_poses:

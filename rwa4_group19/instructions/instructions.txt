@@ -1,13 +1,25 @@
 
-# RWA4 - Group 19
+# Final - Group 19
 
-# ENPM 809E - RWA4
+# ENPM 809E - Final
 # Author(s): Tanuj Thakkar (117817539), Aneesh Dandime (118418506)
 # Email(s): tanuj@umd.edu, aneeshd@umd.edu
 
-- Place the rwa4_group19 ROS2 package in your final_809e_ws with enpm809e_final_spring2023 packages
-- Build it
-- Source the workspace
+
+- Create a ros2 Galactic workspaces named group19_ws,
+
+    mkdir -p group19_ws/src
+
+- Clone enpm809e_final_spring2023 repo final branch in src directory
+
+    cd group19_ws/src
+    git clone https://github.com/zeidk/enpm809e_final_spring2023.git -b final
+
+- Place the rwa4_group19 package in enpm809e_final_spring2023 directory
+
+    cd group19_ws
+    colcon build
+    source group19_ws/install/setup.bash (*Perform in every terminal)
 
 - Run the ariac.launch.py file of the ariac_gazebo package using the following command,
 
@@ -17,6 +29,7 @@
 
     ros2 launch robot_commander robot_commander.launch.py
 
-- Run rwa4.launch.py file of the rwa4_group19 package using the following command,
+- Wait till the above two nodes are fully running and waiting for competition to start.
+  Run rwa4.launch.py file of the rwa4_group19 package using the following command,
 
     ros2 launch rwa4_group19 rwa4.launch.py

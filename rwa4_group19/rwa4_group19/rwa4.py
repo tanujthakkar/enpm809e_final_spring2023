@@ -44,6 +44,21 @@ class RWA4Node(Node):
         _orders (deque): queue of orders received
         _tray_poses (dict): dictionary of tray poses
         _part_poses (dict): dictionary of part poses
+        _tables (dict): dictionary of tables for trays
+        _robot_action_timer(): timer callback function for robot actions
+        _start_competition_client(): client for starting competition
+        _floor_robot_go_home_client(): client for floor robot going home
+        _enter_tool_changer_client(): client for entering tool changer
+        _exit_tool_changer_client(): client for exiting tool changer
+        _pickup_tray_client(): client for picking up tray
+        _move_tray_to_agv_client(): client for moving tray to AGV
+        _place_tray_on_agv_client(): client for placing tray on AGV
+        _retract_from_agv_client(): client for retracting from AGV
+        _pickup_part_client(): client for picking up part
+        _move_part_to_agv_client(): client for moving part to AGV
+        _place_part_in_tray_client(): client for placing part in tray
+        _floor_robot_change_gripper_client(): client for changing gripper of floor robot
+        _floor_robot_enable_gripper_client(): client for enabling gripper of floor robot
         _order_sub (Subscriber): subscriber for orders
         _table1_cam_sub (Subscriber): subscriber for table 1 camera
         _table2_cam_sub (Subscriber): subscriber for table 2 camera
@@ -55,9 +70,32 @@ class RWA4Node(Node):
         _left_bins_cam_sub_msg (bool): flag to check if left bins camera message has been received
         _right_bins_cam_sub_msg (bool): flag to check if right bins camera message has been received
         _log_order (bool): flag to check if order logging is enabled
+        _order_id (int): order id from parameter file
+        _kit_completed (bool): flag to check if kit has been completed
+        _competition_started (bool): flag to check if competition has started
+        _competition_state (str): state of the competition
+        _agv_lock_tray_clients (dict): dictionary of clients for locking trays
+        _move_agv_clients (dict): dictionary of clients for moving AGVs
 
     Methods:
         __init__(node_name): constructor
+        start_competition(): starts the competition
+        move_robot_home(robot_name): moves the robot to home position
+        goto_tool_changer(robot, station, gripper_type): moves the robot inside tool changer
+        retract_from_tool_changer(robot, station, gripper_type): moves the robot out of tool changer
+        pickup_tray(robot, tray_id, tray_pose, station): picks up the tray
+        move_tray_to_agv(robot, tray_pose, agv): moves the tray to the AGV
+        place_tray(robot, agv, tray_id): places the tray on the AGV
+        retract_from_agv(robot, agv): retracts the robot from the AGV
+        pickup_part(robot, part_type, part_color, part_pose, bin_side): picks up the part
+        move_part_to_agv(robot, part_pose, agv, quadrant): moves the part to the AGV
+        place_part_in_tray(robot, agv, quadrant): places the part in the tray
+        lock_agv(agv): locks the AGV
+        move_agv_to_warehouse(agv): moves the AGV to the warehouse
+        floor_robot_change_gripper(gripper_type): changes the gripper of the floor robot
+        floor_robot_gripper_control(enable): enables/disables the gripper of the floor robot
+        _robot_action_timer_callback(): callback function for robot action timer
+        _competition_state_cb(msg): callback function for competition state subscriber
         _order_sub_callback(msg): callback function for order subscriber
         _table1_cam_sub_callback(msg): callback function for table 1 camera subscriber
         _table2_cam_sub_callback(msg): callback function for table 2 camera subscriber
@@ -336,30 +374,30 @@ class RWA4Node(Node):
         else:
             self.get_logger().warn('Unable to start competition')
 
-    def move_robot_home(self, robot):
+    def move_robot_home(self, robot_name):
         '''
         Move the robot to home position
 
         Args:
-            robot (str): Name of the robot
+            robot_name (str): Name of the robot
         '''
         request = Trigger.Request()
 
-        if robot == 'floor_robot':
+        if robot_name == 'floor_robot':
             if not self._floor_robot_go_home_client.wait_for_service(timeout_sec=1.0):
                 self.get_logger().error('Robot commander node not running')
                 return
 
             future = self._floor_robot_go_home_client.call_async(request)
         else:
-            self.get_logger().error(f'Robot name: ({robot}) is not valid')
+            self.get_logger().error(f'Robot name: ({robot_name}) is not valid')
             return
 
         # Wait until the service call is completed
         rclpy.spin_until_future_complete(self, future)
 
         if future.result().success:
-            self.get_logger().info(f'Moved {robot} to home position')
+            self.get_logger().info(f'Moved {robot_name} to home position')
         else:
             self.get_logger().warn(future.result().message)
     
@@ -373,6 +411,7 @@ class RWA4Node(Node):
             gripper_type (str): Gripper type
 
         Raises:
+            ValueError: Invalid robot name
             KeyboardInterrupt: Exception raised when the user presses Ctrl+C
         '''
 
@@ -419,6 +458,7 @@ class RWA4Node(Node):
             gripper_type (str): Gripper type
 
         Raises:
+            ValueError: Invalid robot name
             KeyboardInterrupt: Exception raised when the user presses Ctrl+C
         '''
 
@@ -462,6 +502,9 @@ class RWA4Node(Node):
 
         Returns:
             bool: True if successful, False otherwise
+
+        Raises:
+            ValueError: Invalid robot name
         '''
 
         request = PickupTray.Request()
@@ -501,6 +544,9 @@ class RWA4Node(Node):
 
         Returns:
             bool: True if successful, False otherwise
+        
+        Raises:
+            ValueError: Invalid robot name
         '''
 
         request = MoveTrayToAGV.Request()
@@ -532,6 +578,9 @@ class RWA4Node(Node):
 
         Returns:
             bool: True if successful, False otherwise
+        
+        Raises:
+            ValueError: Invalid robot name
         '''
 
         request = PlaceTrayOnAGV.Request()
@@ -564,6 +613,9 @@ class RWA4Node(Node):
 
         Returns:
             bool: True if successful, False otherwise
+        
+        Raises:
+            ValueError: Invalid robot name
         '''
 
         request = RetractFromAGV.Request()
@@ -596,6 +648,9 @@ class RWA4Node(Node):
 
         Returns:
             bool: True if successful, False otherwise
+        
+        Raises:
+            ValueError: Invalid robot name
         '''
 
         request = PickupPart.Request()
@@ -633,6 +688,9 @@ class RWA4Node(Node):
 
         Returns:
             bool: True if successful, False otherwise
+        
+        Raises:
+            ValueError: Invalid robot name
         '''
 
         request = MovePartToAGV.Request()
@@ -665,6 +723,9 @@ class RWA4Node(Node):
 
         Returns:
             bool: True if successful, False otherwise
+        
+        Raises:
+            ValueError: Invalid robot name
         '''
 
         request = PlacePartInTray.Request()
@@ -741,6 +802,9 @@ class RWA4Node(Node):
 
         Returns:
             bool: True if successful, False otherwise
+        
+        Raises:
+            ValueError: Invalid gripper type
         '''
 
         request = ChangeGripper.Request()
